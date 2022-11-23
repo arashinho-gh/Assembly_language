@@ -1,5 +1,4 @@
 import ast
-
 LabeledInstruction = tuple[str, str]
 
 class TopLevelProgram(ast.NodeVisitor):
@@ -12,6 +11,7 @@ class TopLevelProgram(ast.NodeVisitor):
         self.__should_save = True
         self.__current_variable = None
         self.__elem_id = 0
+        self._initializes = set()
 
     def finalize(self):
         self.__instructions.append((None, '.END'))
@@ -26,14 +26,19 @@ class TopLevelProgram(ast.NodeVisitor):
         self.__current_variable = node.targets[0].id
         # visiting the left part, now knowing where to store the result
         self.visit(node.value)
-        if self.__should_save:
+        if isinstance(node.value, ast.Constant):
+            if node.targets[0].id in self._initializes:
+                self.__record_instruction(f'LDWA {node.value.value},i')
+                self.__record_instruction(f'STWA {self.__current_variable},d')
+            self._initializes.add(node.targets[0].id)
+        if self.__should_save and not isinstance(node.value, ast.Constant):
             self.__record_instruction(f'STWA {self.__current_variable},d')
         else:
             self.__should_save = True
         self.__current_variable = None
 
-    def visit_Constant(self, node):
-        self.__record_instruction(f'LDWA {node.value},i')
+    # def visit_Constant(self, node):
+    #     self.__record_instruction(f'LDWA {node.value},i')
     
     def visit_Name(self, node):
         self.__record_instruction(f'LDWA {node.id},d')
@@ -105,6 +110,8 @@ class TopLevelProgram(ast.NodeVisitor):
     def __access_memory(self, node, instruction, label = None):
         if isinstance(node, ast.Constant):
             self.__record_instruction(f'{instruction} {node.value},i', label)
+        elif node.id[0] == '_' and node.id[1:].isupper():
+            self.__record_instruction(f'{instruction} {node.id},i', label)
         else:
             self.__record_instruction(f'{instruction} {node.id},d', label)
 
