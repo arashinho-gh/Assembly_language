@@ -1,26 +1,21 @@
 import ast
 LabeledInstruction = tuple[str, str]
 
-class TopLevelProgram(ast.NodeVisitor):
+class FuncTranslate(ast.NodeVisitor):
     """We supports assignments and input/print calls"""
     
-    def __init__(self, entry_point) -> None:
-        super().__init__()
+    def __init__(self, function_index) -> None:
         self.__instructions = list()
-        self.__record_instruction('NOP1', label=entry_point)
         self.__should_save = True
         self.__current_variable = None
         self.__elem_id = 0
         self._initializes = set()
+        #function attributes
         self.retVal = False
+        self.function = function_index
 
     def finalize(self):
-        self.__instructions.append((None, '.END'))
-        return self.__instructions
-
-    ####
-    ## Handling Assignments (variable = ...)
-    ####
+        return (self.__instructions, self.retVal)
 
     def visit_Assign(self, node):
         # remembering the name of the target
@@ -31,27 +26,21 @@ class TopLevelProgram(ast.NodeVisitor):
                 self.retVal = True
         self.visit(node.value)
         if isinstance(node.value, ast.Constant):
-            if node.targets[0].id in self._initializes:
-                self.__record_instruction(f'LDWA {node.value.value},i')
-                self.__record_instruction(f'STWA {self.__current_variable},d')
+            self.__record_instruction(f'LDWA {node.value.value},i')
+            self.__record_instruction(f'STWA {self.__current_variable},s')
             self._initializes.add(node.targets[0].id)
-        
         if self.__should_save and not isinstance(node.value, ast.Constant):
-            self.__record_instruction(f'STWA {self.__current_variable},d')
+            self.__record_instruction(f'STWA {self.__current_variable},s')
             # Checking if a return value of function is saved in the variables
             if (type(node.value)) == ast.Call:
                 if node.value.func.id not in ['int', 'input', 'print']:
-                    self.__record_instruction(f'ADDSP 2,i')
+                    self.__record_instruction(f'ADDSP 2,s')
         else:
             self.__should_save = True
         self.__current_variable = None
-
-    """This method is applied was implemented in the visit_Assign method"""
-    # def visit_Constant(self, node):
-    #     self.__record_instruction(f'LDWA {node.value},i')
     
     def visit_Name(self, node):
-        self.__record_instruction(f'LDWA {node.id},d')
+        self.__record_instruction(f'LDWA {node.id},s')
 
     def visit_BinOp(self, node):
         self.__access_memory(node.left, 'LDWA')
@@ -69,42 +58,27 @@ class TopLevelProgram(ast.NodeVisitor):
                 self.visit(node.args[0])
             case 'input':
                 # We are only supporting integers for now
-                self.__record_instruction(f'DECI {self.__current_variable},d')
+                self.__record_instruction(f'DECI {self.__current_variable},s')
                 self.__should_save = False # DECI already save the value in memory
             case 'print':
                 # We are only supporting integers for now
-                self.__record_instruction(f'DECO {node.args[0].id},d')
+                self.__record_instruction(f'DECO {node.args[0].id},s')
             case _:
-                #raise ValueError(f'Unsupported function call: { node.func.id}')
-                if (self.retVal):
-                    self.__record_instruction(f'SUBSP {(len(node.args)*2) + 2},i')
-                else:
-                    self.__record_instruction(f'SUBSP {len(node.args)*2},i')
+                #In case a function is called
+                self.__record_instruction(f'SUBSP {len(node.args)*2},i')
                 for index, instruction in enumerate(node.args):
-                    self.__record_instruction(f'LDWA {instruction.id},d')
+                    self.__record_instruction(f'LDWA {instruction.id},s')
                     self.__record_instruction(f'STWA {index*2},s')
                 self.__record_instruction(f'CALL {node.func.id}')
                 self.__record_instruction(f'ADDSP {len(node.args)*2},i')
-                if (self.retVal):
-                    self.__record_instruction(f'LDWA 0,s')
-
-
-    ####
-    ## Handling While loops (only variable OP variable)
-    ####
 
     def visit_While(self, node):
-        for n in node.body:
-            if type(n) == ast.Assign:
-                self._initializes.add(n.targets[0].id)
         loop_id = self.__identify()
         inverted = {
             ast.Lt:  'BRGE', # '<'  in the code means we branch if '>=' 
             ast.LtE: 'BRGT', # '<=' in the code means we branch if '>' 
             ast.Gt:  'BRLE', # '>'  in the code means we branch if '<='
             ast.GtE: 'BRLT', # '>=' in the code means we branch if '<'
-            ast.Eq: 'BRNE', # '!=' in the code means we branch if '='
-            ast.NotEq: 'BREQ', # '=' in the code means we branch if '!='
         }
         # left part can only be a variable
         self.__access_memory(node.test.left, 'LDWA', label = f'test_{loop_id}')
@@ -118,10 +92,6 @@ class TopLevelProgram(ast.NodeVisitor):
         self.__record_instruction(f'BR test_{loop_id}')
         # Sentinel marker for the end of the loop
         self.__record_instruction(f'NOP1', label = f'end_l_{loop_id}')
-
-    ####
-    ## Handling Conditionals (if, elif, else) 
-    ####
 
     def visit_If(self, node):
         loop_id = self.__identify()
@@ -151,30 +121,22 @@ class TopLevelProgram(ast.NodeVisitor):
         # marker for if exit
         self.__record_instruction(f'NOP1', label = f'exit_{loop_id}')
 
-
-    ####
-    ## Not handling function calls 
-    ####
-
-    def visit_FunctionDef(self, node):
-         """We do not visit function definitions, they are not top level"""
-         pass
-
-    ####
-    ## Helper functions to 
-    ####
+    def visit_Return(self, node):
+        self.__record_instruction(f'LDWA {node.value.id},s')
+        self.__record_instruction(f'STWA retVal{self.function},s')
+        self.retVal = True
 
     def __record_instruction(self, instruction, label = None):
         self.__instructions.append((label, instruction))
-
+    
     def __access_memory(self, node, instruction, label = None):
         if isinstance(node, ast.Constant):
             self.__record_instruction(f'{instruction} {node.value},i', label)
         elif node.id[0] == '_' and node.id[1:].isupper():
             self.__record_instruction(f'{instruction} {node.id},i', label)
         else:
-            self.__record_instruction(f'{instruction} {node.id},d', label)
-
+            self.__record_instruction(f'{instruction} {node.id},s', label)
+    
     def __identify(self):
         result = self.__elem_id
         self.__elem_id = self.__elem_id + 1
