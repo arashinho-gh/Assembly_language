@@ -4,7 +4,7 @@ LabeledInstruction = tuple[str, str]
 class FuncTranslate(ast.NodeVisitor):
     """We supports assignments and input/print calls"""
     
-    def __init__(self, function_index) -> None:
+    def __init__(self, function_index, localVars) -> None:
         self.__instructions = list()
         self.__should_save = True
         self.__current_variable = None
@@ -13,9 +13,14 @@ class FuncTranslate(ast.NodeVisitor):
         #function attributes
         self.retVal = False
         self.function = function_index
+        self.localVars = localVars
 
     def finalize(self):
         return (self.__instructions, self.retVal)
+
+    ####
+    ## Handling Assignments (variable = ...)
+    ####
 
     def visit_Assign(self, node):
         # remembering the name of the target
@@ -30,11 +35,14 @@ class FuncTranslate(ast.NodeVisitor):
             self.__record_instruction(f'STWA {self.__current_variable},s')
             self._initializes.add(node.targets[0].id)
         if self.__should_save and not isinstance(node.value, ast.Constant):
-            self.__record_instruction(f'STWA {self.__current_variable},s')
             # Checking if a return value of function is saved in the variables
             if (type(node.value)) == ast.Call:
                 if node.value.func.id not in ['int', 'input', 'print']:
-                    self.__record_instruction(f'ADDSP 2,s')
+                    self.__record_instruction(f'LDWA 0,s')
+                    self.__record_instruction(f'ADDSP 2,i')
+                    self.__record_instruction(f'STWA {self.__current_variable},s')
+            else:
+                self.__record_instruction(f'STWA {self.__current_variable},s')
         else:
             self.__should_save = True
         self.__current_variable = None
@@ -51,6 +59,10 @@ class FuncTranslate(ast.NodeVisitor):
         else:
             raise ValueError(f'Unsupported binary operator: {node.op}')
 
+    ####
+    ## Handling Calls(print,input,int,functions...)
+    ####
+
     def visit_Call(self, node):
         match node.func.id:
             case 'int': 
@@ -65,12 +77,24 @@ class FuncTranslate(ast.NodeVisitor):
                 self.__record_instruction(f'DECO {node.args[0].id},s')
             case _:
                 #In case a function is called
-                self.__record_instruction(f'SUBSP {len(node.args)*2},i')
                 for index, instruction in enumerate(node.args):
                     self.__record_instruction(f'LDWA {instruction.id},s')
-                    self.__record_instruction(f'STWA {index*2},s')
+                    if self.retVal:
+                        self.__record_instruction(f'STWA {(len(node.args) * -2) + (2*index) - 2},s')
+                    else:
+                        self.__record_instruction(f'STWA {(len(node.args) * -2) + (2*index)},s')
+                if self.retVal:
+                    self.__record_instruction(f'LDWA 0,i')
+                    self.__record_instruction(f'STWA -2,s')
+                    self.__record_instruction(f'SUBSP {len(node.args)*2 + 2},i')
+                else:
+                    self.__record_instruction(f'SUBSP {len(node.args)*2},i')
                 self.__record_instruction(f'CALL {node.func.id}')
                 self.__record_instruction(f'ADDSP {len(node.args)*2},i')
+
+    ####
+    ## Handling While loops (only variable OP variable)
+    ####
 
     def visit_While(self, node):
         loop_id = self.__identify()
@@ -81,17 +105,21 @@ class FuncTranslate(ast.NodeVisitor):
             ast.GtE: 'BRLT', # '>=' in the code means we branch if '<'
         }
         # left part can only be a variable
-        self.__access_memory(node.test.left, 'LDWA', label = f'test_{loop_id}')
+        self.__access_memory(node.test.left, 'LDWA', label = f'test{self.function}_{loop_id}')
         # right part can only be a variable
         self.__access_memory(node.test.comparators[0], 'CPWA')
         # Branching is condition is not true (thus, inverted)
-        self.__record_instruction(f'{inverted[type(node.test.ops[0])]} end_l_{loop_id}')
+        self.__record_instruction(f'{inverted[type(node.test.ops[0])]} endl{self.function}_{loop_id}')
         # Visiting the body of the loop
         for contents in node.body:
             self.visit(contents)
-        self.__record_instruction(f'BR test_{loop_id}')
+        self.__record_instruction(f'BR test{self.function}_{loop_id}')
         # Sentinel marker for the end of the loop
-        self.__record_instruction(f'NOP1', label = f'end_l_{loop_id}')
+        self.__record_instruction(f'NOP1', label = f'endl{self.function}_{loop_id}')
+
+    ####
+    ## Handling Conditionals (if, elif, else) 
+    ####
 
     def visit_If(self, node):
         loop_id = self.__identify()
@@ -122,8 +150,13 @@ class FuncTranslate(ast.NodeVisitor):
         self.__record_instruction(f'NOP1', label = f'exit_{loop_id}')
 
     def visit_Return(self, node):
-        self.__record_instruction(f'LDWA {node.value.id},s')
+        if not isinstance (node.value, ast.Constant):
+            self.__record_instruction(f'LDWA {node.value.id},s')
+        else:
+            self.__record_instruction(f'LDWA {node.value.value},i')
         self.__record_instruction(f'STWA retVal{self.function},s')
+        self.__record_instruction(f'ADDSP {len(self.localVars)*2},i')
+        self.__record_instruction('RET')
         self.retVal = True
 
     def __record_instruction(self, instruction, label = None):

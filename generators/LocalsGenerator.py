@@ -20,8 +20,8 @@ class LocalGenerator():
         """Creating the parameters"""
         print("; Allocating function Parameters")
         temp =0
+        max += 2
         for n in self.arguments:
-            max += 2
             print(f"{n}:\t\t .EQUATE {max + self.arguments[n]}")
             temp = max + self.arguments[n]
             

@@ -45,10 +45,6 @@ class TopLevelProgram(ast.NodeVisitor):
         else:
             self.__should_save = True
         self.__current_variable = None
-
-    """This method is applied was implemented in the visit_Assign method"""
-    # def visit_Constant(self, node):
-    #     self.__record_instruction(f'LDWA {node.value},i')
     
     def visit_Name(self, node):
         self.__record_instruction(f'LDWA {node.id},d')
