@@ -36,5 +36,8 @@ def process(input_file, root_node):
     ep = EntryPoint(top_level.finalize(), memory_alloc.global_vars)
     ep.generate() 
 
+    # this is the vistable item, we then call the visitors to implement the functionality based on different types
+    # the visitors get the relevant info and the generators generate the coressponding pep-9 code by combining all info
+
 if __name__ == '__main__':
     main()

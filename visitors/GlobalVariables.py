@@ -21,7 +21,7 @@ class GlobalVariableExtraction(ast.NodeVisitor):
                 else:
                     self.results[node.targets[0].id] = ['.WORD', node.value.value]
             else:
-                self.results [node.targets[0].id] = ['.BLOCK ','2']
+                self.results[node.targets[0].id] = ['.BLOCK ','2']
 
 
     def visit_FunctionDef(self, node):
