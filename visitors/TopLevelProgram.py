@@ -24,19 +24,35 @@ class TopLevelProgram(ast.NodeVisitor):
 
     def visit_Assign(self, node):
         # remembering the name of the target
-        self.__current_variable = node.targets[0].id
+        if isinstance(node.targets[0], ast.Subscript):
+            self.__current_variable = node.targets[0].value.id
+        else:
+            self.__current_variable = node.targets[0].id
         # Checking if a return value of function is saved in the variables
         if (type(node.value)) == ast.Call:
             if node.value.func.id not in ['int', 'input', 'print']:
                 self.retVal = True
         self.visit(node.value)
         if isinstance(node.value, ast.Constant):
-            if node.targets[0].id in self._initializes:
-                self.__record_instruction(f'LDWA {node.value.value},i')
-                self.__record_instruction(f'STWA {self.__current_variable},d')
-            self._initializes.add(node.targets[0].id)
+            if self.__current_variable in self._initializes or isinstance(node.targets[0], ast.Subscript):
+                if isinstance(node.targets[0], ast.Subscript):
+                    self.__record_instruction(f'LDWA {node.value.value},i')
+                    self.__access_memory(node.targets[0].slice, "LDWX")
+                    self.__record_instruction(f'ASLX')
+                    self.__record_instruction(f'STWA {self.__current_variable},x')
+                else:
+                    self.__record_instruction(f'LDWA {node.value.value},i')
+                    self.__record_instruction(f'STWA {self.__current_variable},d')
+            if isinstance(node.targets[0], ast.Subscript):
+                self._initializes.add(node.targets[0].value.id)
+            else:
+                self._initializes.add(node.targets[0].id)
+        elif isinstance(node.targets[0], ast.Subscript):
+                self.__access_memory(node.targets[0].slice, "LDWX")
+                self.__record_instruction(f'ASLX')
+                self.__record_instruction(f'STWA {self.__current_variable},x')
         
-        if self.__should_save and not isinstance(node.value, ast.Constant):
+        if self.__should_save and not isinstance(node.targets[0], ast.Subscript) and not isinstance(node.value, ast.Constant) and not (isinstance(node.value, ast.BinOp) and isinstance(node.value.op, ast.Mult)):
             self.__record_instruction(f'STWA {self.__current_variable},d')
             # Checking if a return value of function is saved in the variables
             if (type(node.value)) == ast.Call:
@@ -50,6 +66,36 @@ class TopLevelProgram(ast.NodeVisitor):
         self.__record_instruction(f'LDWA {node.id},d')
 
     def visit_BinOp(self, node):
+        if isinstance(node.left, ast.Subscript) or isinstance(node.right, ast.Subscript):
+            self.__record_instruction(f'LDWA 0,i')
+            # left-argument
+            if not isinstance(node.left, ast.Subscript):
+                self.__access_memory(node.left, 'ADDA')
+            else:
+                self.__access_memory(node.left.slice, 'LDWX')
+                self.__record_instruction(f'ASLX')
+                self.__record_instruction(f'ADDA {node.left.value.id},x')
+
+            # right-argument
+            if isinstance(node.right, ast.Subscript):
+                self.__access_memory(node.right.slice, 'LDWX')
+                self.__record_instruction(f'ASLX')
+
+            # operation
+            if isinstance(node.op, ast.Add):
+                if isinstance(node.right, ast.Subscript):
+                    self.__record_instruction(f'ADDA {node.right.value.id},x')
+                else:
+                    self.__access_memory(node.right, 'ADDA')
+            else:
+                if isinstance(node.right, ast.Subscript):
+                    self.__record_instruction(f'SUBA {node.right.value.id},x')
+                else:
+                    self.__access_memory(node.right, 'SUBA') 
+            return
+
+        if isinstance(node.op, ast.Mult):
+            return
         self.__access_memory(node.left, 'LDWA')
         if isinstance(node.op, ast.Add):
             self.__access_memory(node.right, 'ADDA')
@@ -69,7 +115,12 @@ class TopLevelProgram(ast.NodeVisitor):
                 self.__should_save = False # DECI already save the value in memory
             case 'print':
                 # We are only supporting integers for now
-                self.__record_instruction(f'DECO {node.args[0].id},d')
+                if isinstance(node.args[0], ast.Subscript):
+                    self.__access_memory(node.args[0].slice, 'LDWX')
+                    self.__record_instruction(f'ASLX')
+                    self.__record_instruction(f'DECO {node.args[0].value.id},x')
+                else:
+                    self.__record_instruction(f'DECO {node.args[0].id},d')
             case _:
                 #raise ValueError(f'Unsupported function call: { node.func.id}')
                 if (self.retVal):
@@ -92,7 +143,10 @@ class TopLevelProgram(ast.NodeVisitor):
     def visit_While(self, node):
         for n in node.body:
             if type(n) == ast.Assign:
-                self._initializes.add(n.targets[0].id)
+                if isinstance(n.targets[0], ast.Subscript):
+                    self._initializes.add(n.targets[0].value.id)
+                else:
+                    self._initializes.add(n.targets[0].id)
         loop_id = self.__identify()
         inverted = {
             ast.Lt:  'BRGE', # '<'  in the code means we branch if '>=' 

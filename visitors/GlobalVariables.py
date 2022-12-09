@@ -12,6 +12,9 @@ class GlobalVariableExtraction(ast.NodeVisitor):
     def visit_Assign(self, node):
         if len(node.targets) != 1:
             raise ValueError("Only unary assignments are supported")
+
+        if isinstance(node.targets[0], ast.Subscript):
+            return
             
         """It will only record the first apperance of the global variable"""
         if node.targets[0].id not in self.results:
@@ -20,6 +23,12 @@ class GlobalVariableExtraction(ast.NodeVisitor):
                     self.results[node.targets[0].id] = ['.EQUATE', node.value.value]
                 else:
                     self.results[node.targets[0].id] = ['.WORD', node.value.value]
+            elif isinstance(node.value, ast.BinOp) and isinstance(node.value.left, ast.List):
+                size = str(node.value.right.value * 2)
+                self.results[node.targets[0].id] = ['.BLOCK', size]
+            elif isinstance(node.value, ast.BinOp) and isinstance(node.value.right, ast.List):
+                size = str(node.value.left.value * 2)
+                self.results[node.targets[0].id] = ['.BLOCK', size]     
             else:
                 self.results [node.targets[0].id] = ['.BLOCK ','2']
 
@@ -27,4 +36,3 @@ class GlobalVariableExtraction(ast.NodeVisitor):
     def visit_FunctionDef(self, node):
         """We do not visit function definitions, they are not global by definition"""
         pass
-   

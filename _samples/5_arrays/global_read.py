@@ -4,7 +4,8 @@ key = int(input())
 n = int(input())
 
 if n > 25:
-    exit(-1) # Pep/9 translation: STOP
+    #exit(-1) # Pep/9 translation: STOP
+    x = 1
 
 i = 0
 while i < n:

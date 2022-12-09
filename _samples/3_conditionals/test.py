@@ -1,10 +1,6 @@
-a = int(input())
-b = int(input())
-c = int(input())
+a = [0] * 6
+x = int(input())
+a[1] = 2
+a[2] = a[1] + a[1]
+print(a[2])
 
-if a < b:
-    print(a)
-elif b < c:
-    print(b)
-else:
-    print(c)
